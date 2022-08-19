@@ -1,0 +1,118 @@
+# test x86 on x86
+---
+steps:
+
+  - name: download image
+    command:
+      test -f kinetic-server-cloudimg-riscv64.img ||
+      wget
+      http://cloud-images.ubuntu.com/kinetic/current/kinetic-server-cloudimg-riscv64.img
+
+  - name: extract image
+    command:
+      test -f kinetic-server-cloudimg-riscv64.raw ||
+      qemu-img convert -f qcow2 -O raw kinetic-server-cloudimg-riscv64.img
+      kinetic-server-cloudimg-riscv64.raw
+
+  - name: create ssh certificate
+    command:
+      test -f id_rsa ||
+      ssh-keygen -t rsa -b 4096 -N '' -f id_rsa
+
+  - name: create cloud init data
+    command: >
+      rm -rf cidata/ &&
+      mkdir cidata/ &&
+      echo 'instance-id:' $(uuidgen) > cidata/meta-data &&
+      echo 'Package: "openvswitch*\nPin:
+      release o=LP-PPA-ubuntu-risc-v-team-develop\nPin-Priority: 900"
+      > cidata/ppa_pin' &&
+      cp id_rsa* cidata/ &&
+      src/userdata.py -o cidata/user-data -n virtriscv64
+      -p 'git snapd' &&
+      mkisofs -J -V cidata -o cidata-riscv64.iso cidata/
+
+  - name: create image
+    command:
+      rm -f riscv64.img && (
+      cp kinetic-server-cloudimg-riscv64.raw riscv64.img &&
+      qemu-img resize -f raw riscv64.img 8G
+      )
+
+  - name: launch VM
+    launch:
+      qemu-system-riscv64
+      -M virt -accel tcg -m 2G -smp 2
+      -nographic
+      -bios /usr/lib/riscv64-linux-gnu/opensbi/generic/fw_jump.bin
+      -kernel /usr/lib/u-boot/qemu-riscv64_smode/u-boot.bin
+      -drive file=riscv64.img,format=raw,if=virtio
+      -drive file=cidata-riscv64.iso,format=raw,if=virtio
+      -device virtio-net-pci,netdev=eth0,mq=on,romfile=
+      -netdev
+      user,id=eth0,hostfwd=tcp::8111-:22
+    expected:
+      - 'Cloud-init.*finished'
+
+  - name: wait
+    command:
+      sleep 6
+
+  - name: install snapcraft
+    command:
+      ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -p 8111 user@localhost
+      'sudo snap install snapcraft --classic --channel=7.x/beta &&
+      snap info snapcraft'
+
+  - name: change channel for snapcraft
+    command:
+      ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -p 8111 user@localhost
+      'sudo snap install snapcraft --classic --channel=7.x/beta &&
+      snap info snapcraft'
+
+  - name: initialize lxd
+    command:
+      ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -p 8111 user@localhost
+      sudo lxd init --auto
+
+  - name: clone hello world example
+    command: >
+      ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -p 8111 user@localhost
+      "cd /home/user &&
+      git clone https://github.com/ubuntu-core/hello-snapcraftio.git &&
+      cd /home/user/hello-snapcraftio &&
+      sed -i 's/^base: core20/base: core22/' snap/snapcraft.yaml &&
+      git diff"
+
+  - name: build snap
+    command:
+      ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -p 8111 user@localhost
+      'cd /home/user/hello-snapcraftio &&
+      snapcraft --use-lxd'
+    expected:
+      - Snapped hello.*snap
+
+  - name: install snap
+    command:
+      ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -p 8111 user@localhost
+      'cd /home/user/hello-snapcraftio &&
+      sudo snap install hello.*snap --dangerous'
+    expected:
+      - hello.*installed
+
+  - name: run snap
+    command:
+      ssh -i id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -p 8111 user@localhost
+      /snap/bin/hello
+    expected:
+      - Hello
+
+  - name: stop VM
+    stop: launch VM
