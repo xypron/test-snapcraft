@@ -1,4 +1,5 @@
-# test x86 on x86
+# test building a snap on riscv64
+# SPDX-License-Identifier: GPL-2.0
 ---
 steps:
 

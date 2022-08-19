@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
 
 if [ $# -ge 2 ]; then
 	log=$2
